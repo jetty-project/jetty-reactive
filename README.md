@@ -1,2 +1,1 @@
-# jetty-reactive
-Jetty Reactive Streams
+Jetty Scratch Pad of silly ideas
