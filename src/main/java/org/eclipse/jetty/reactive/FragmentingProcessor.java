@@ -15,21 +15,21 @@ import org.reactivestreams.Subscription;
 public class FragmentingProcessor implements Processor<ByteBuffer, ByteBuffer>
 {
     private final int maxBufferSize;
-    private final Semaphore semaphore;
+    private final Semaphore demand;
     private Subscriber<? super ByteBuffer> subscriber;
     private Subscription subscription;
     
     public FragmentingProcessor(int maxBufferSize)
     {
         this.maxBufferSize=maxBufferSize;
-        this.semaphore=new Semaphore(0);
+        this.demand=new Semaphore(0);
     }
     
     @Override
     public void onSubscribe(Subscription s)
     {
         subscription=s;
-        subscription.request(semaphore.availablePermits());
+        subscription.request(demand.availablePermits());
     }
 
     @Override
@@ -49,7 +49,7 @@ public class FragmentingProcessor implements Processor<ByteBuffer, ByteBuffer>
                 length-=chunk;
                 slice.limit(offset);
 
-                semaphore.acquire();
+                demand.acquire();
                 subscriber.onNext(slice);
                 slice.position(offset);
             }
@@ -84,7 +84,7 @@ public class FragmentingProcessor implements Processor<ByteBuffer, ByteBuffer>
             @Override
             public void request(long n)
             {
-                semaphore.release((int)n);
+                demand.release((int)n);
                 if (FragmentingProcessor.this.subscription!=null)
                     FragmentingProcessor.this.subscription.request(n);
             }
