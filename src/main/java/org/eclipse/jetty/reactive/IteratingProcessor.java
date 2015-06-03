@@ -146,7 +146,7 @@ public abstract class IteratingProcessor<T,R> implements Processor<T,R>
     /** Produce an R result from a T item.
      * @param item The item to process a result from, or null of complete is true
      * @param complete True if this is the last item (or item could be null)
-     * @return the results
+     * @return the results or null if the item is exhausted
      */
     protected abstract R process(T item,boolean complete);
 
