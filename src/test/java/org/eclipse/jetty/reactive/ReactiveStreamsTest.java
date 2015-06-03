@@ -20,6 +20,7 @@ package org.eclipse.jetty.reactive;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.util.Map;
 import java.util.Random;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -240,5 +241,71 @@ public class ReactiveStreamsTest
                 .send();
 
         Assert.assertEquals(HttpStatus.OK_200, response.getStatus());
+    }
+    
+
+    @Test
+    public void testAsyncFormFields() throws Exception
+    {
+        Fields requestFields = new Fields(true);
+        requestFields.put("a", "1");
+        requestFields.put("bbb", "two");
+        requestFields.put("blah", "blah");
+
+        Fields resultFields = new Fields(true);
+
+        prepareServer(new HttpServlet()
+        {
+            @Override
+            protected void service(HttpServletRequest request, HttpServletResponse response) throws ServletException, IOException
+            {
+                AsyncContext context = request.startAsync();
+                Publisher<ByteBuffer> publisher = ReactiveSupport.getPublisher(context);
+                Processor<ByteBuffer, Fields.Field> processor = new FormFieldProcessor();
+                publisher.subscribe(processor);
+                processor.subscribe(new Subscriber<Fields.Field>()
+                {
+                    Subscription subscription;
+                    @Override
+                    public void onSubscribe(Subscription a)
+                    {
+                        subscription=a;
+                        subscription.request(1);
+                    }
+
+                    @Override
+                    public void onNext(Fields.Field field)
+                    {
+                        resultFields.add(field.getName(),field.getValue());
+                        subscription.request(1);
+                    }
+
+                    @Override
+                    public void onComplete()
+                    {
+                        context.complete();
+                    }
+
+                    @Override
+                    public void onError(Throwable failure)
+                    {
+                        resultFields.clear();
+                        failure.printStackTrace();
+                    }
+                });
+            }
+            
+
+        });
+
+        ContentResponse response = client.newRequest("localhost", connector.getLocalPort())
+                .timeout(5, TimeUnit.SECONDS)
+                .content(new FormContentProvider(requestFields))
+                .send();
+
+        Assert.assertEquals(HttpStatus.OK_200, response.getStatus());
+        Assert.assertEquals(requestFields, resultFields);
+        
+        
     }
 }
