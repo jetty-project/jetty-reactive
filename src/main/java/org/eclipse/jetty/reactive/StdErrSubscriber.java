@@ -1,6 +1,6 @@
 package org.eclipse.jetty.reactive;
 
-import java.nio.ByteBuffer;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -9,12 +9,13 @@ import org.eclipse.jetty.util.thread.Scheduler;
 import org.reactivestreams.Subscriber;
 import org.reactivestreams.Subscription;
 
-public class StdErrSubscriber implements Subscriber<ByteBuffer>
+public class StdErrSubscriber implements Subscriber<byte[]>
 {
     private final int max;
     private final AtomicInteger window = new AtomicInteger();
     private final Scheduler scheduler;
     private Subscription subscription;
+    private CountDownLatch complete = new CountDownLatch(1);
     
     StdErrSubscriber(Scheduler s, int window)
     {
@@ -32,9 +33,9 @@ public class StdErrSubscriber implements Subscriber<ByteBuffer>
     }
 
     @Override
-    public void onNext(ByteBuffer t)
+    public void onNext(byte[] item)
     {
-        System.err.println(BufferUtil.toDetailString(t));
+        System.err.println(BufferUtil.toDetailString(BufferUtil.toBuffer(item)));
         
         int w=window.decrementAndGet();
         while (w<=(max/2))
@@ -53,13 +54,20 @@ public class StdErrSubscriber implements Subscriber<ByteBuffer>
     @Override
     public void onError(Throwable t)
     {
+        complete.countDown();
         t.printStackTrace();
     }
 
     @Override
     public void onComplete()
     {
+        complete.countDown();
         System.err.println("===");
+    }
+    
+    public void waitUntilComplete() throws InterruptedException
+    {
+        complete.await();
     }
 
 }

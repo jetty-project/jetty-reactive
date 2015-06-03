@@ -39,9 +39,7 @@ public class Main
                     {
                         try
                         {
-                            // end the demo
                             out.close();
-                            scheduler.stop();
                         }
                         catch (Exception e)
                         {
@@ -60,6 +58,9 @@ public class Main
         };
 
         out.setWriteListener(writer);
+        
+        sink.waitUntilComplete();
+        scheduler.stop();
 
     }
 }
