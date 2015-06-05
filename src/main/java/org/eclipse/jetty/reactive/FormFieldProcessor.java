@@ -15,7 +15,7 @@ public class FormFieldProcessor extends IteratingProcessor<ByteBuffer,Fields.Fie
     String name;
     
     @Override
-    protected Fields.Field process(ByteBuffer buffer, boolean complete)
+    protected Fields.Field process(ByteBuffer buffer)
     {
         String value=null;
         while(BufferUtil.hasContent(buffer))
@@ -44,14 +44,33 @@ public class FormFieldProcessor extends IteratingProcessor<ByteBuffer,Fields.Fie
             }
         }
         
-        if (complete && name!=null && value==null)
+        if (name!=null && value!=null)
         {
-            value=builder.toString();
-            builder.reset();
+            Fields.Field field = new Fields.Field(name,value);
+            name=null;
+            return field;
         }
-        
-        if (name==null || value==null)
+        return null;
+    }
+
+    
+    
+    @Override
+    protected boolean isConsumed(ByteBuffer item)
+    {
+        return BufferUtil.isEmpty(item);
+    }
+
+
+
+    @Override
+    protected Fields.Field complete()
+    {
+        if (name==null)
             return null;
+        
+        String value=builder.toString();
+        builder.reset();
         
         Fields.Field field = new Fields.Field(name,value);
         name=null;

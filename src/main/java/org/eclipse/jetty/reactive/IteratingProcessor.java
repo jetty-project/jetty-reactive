@@ -1,5 +1,8 @@
 package org.eclipse.jetty.reactive;
 
+import java.util.ArrayDeque;
+import java.util.Deque;
+
 import org.eclipse.jetty.util.thread.SpinLock;
 import org.reactivestreams.Processor;
 import org.reactivestreams.Subscriber;
@@ -28,16 +31,19 @@ import org.reactivestreams.Subscription;
 public abstract class IteratingProcessor<T,R> implements Processor<T,R>
 {
     private final SpinLock lock = new SpinLock();
+    private final Deque<T> queue = new ArrayDeque<>();
     private Subscription publisher;
     private Subscriber<? super R> subscriber;
     private long requests;
-    private T next;
+    private long requested;
     private boolean complete;
     private boolean iterating;
 
     @Override
     public void onSubscribe(Subscription s)
     {
+        if (s==null)
+            throw new NullPointerException();
         boolean connect=false;
         try(SpinLock.Lock l = lock.lock();)
         {
@@ -51,22 +57,27 @@ public abstract class IteratingProcessor<T,R> implements Processor<T,R>
     @Override
     public void onNext(T item)
     {
+        if (item==null)
+            throw new NullPointerException();
         boolean iterate;
         try(SpinLock.Lock l = lock.lock();)
         {
             // Sanity checks
-            if (requests==0)
-                throw new IllegalStateException("unrequested item");
-            if (next!=null)
-                throw new IllegalStateException("item pending");
             if (complete)
-                throw new IllegalStateException("completed");
+                return;
+            if (requested==0)
+            {
+                publisher.cancel();
+                subscriber.onError(new IllegalStateException("unrequested item"));
+                return;
+            }
             
-            next=item;
+            requested--;
+            queue.add(item);
             
             // If somebody is already iterating (could be this thread in a higher stack frame),
             // then don't re-enter iterate() here
-            iterate = !iterating && next!=null && requests>0;
+            iterate = !iterating && requests>0;
             iterating |= iterate;
         }
         
@@ -77,7 +88,14 @@ public abstract class IteratingProcessor<T,R> implements Processor<T,R>
     @Override
     public void onError(Throwable t)
     {
-        // TODO
+        try(SpinLock.Lock l = lock.lock();)
+        {
+            complete=true;
+            requests=0;
+            requested=0;
+            queue.clear();
+        }
+        subscriber.onError(t);
     }
 
     @Override
@@ -87,7 +105,7 @@ public abstract class IteratingProcessor<T,R> implements Processor<T,R>
         try(SpinLock.Lock l = lock.lock();)
         {
             if (complete)
-                throw new IllegalStateException("completed");
+                return;
             complete=true;
             iterate = !iterating && requests>0;
             iterating |= iterate;
@@ -100,6 +118,8 @@ public abstract class IteratingProcessor<T,R> implements Processor<T,R>
     @Override
     public void subscribe(Subscriber<? super R> s)
     {
+        if (s==null)
+            throw new NullPointerException();
         boolean connect=false;
         try(SpinLock.Lock l = lock.lock();)
         {
@@ -120,76 +140,113 @@ public abstract class IteratingProcessor<T,R> implements Processor<T,R>
             @Override
             public void request(long n)
             {
-                boolean process;
-                boolean demand;
+                boolean iterate;
+                long demand;
                 try(SpinLock.Lock l = lock.lock();)
                 {
                     requests+=n;
-                    process = !iterating && requests>0 && (complete || next!=null);
-                    iterating |= process;
-                    demand=!iterating && next==null && !complete && requests>0;
+                    iterate = !iterating && requests>0 && (complete || !queue.isEmpty());
+                    iterating |= iterate;
+                    
+                    demand=(iterating || !queue.isEmpty())?0:(requests-requested);
+                    requested+=demand;
                 }
-                if (process)
+                if (iterate)
                     iterate();
-                else if (demand)
-                    publisher.request(1);
+                else if (demand>0)
+                    publisher.request(demand);
             }
             
             @Override
             public void cancel()
             {
-                // TODO
+                try(SpinLock.Lock l = lock.lock();) 
+                {
+                    complete=true;
+                    requests=0;
+                    requested=0;
+                    queue.clear();
+                }
+                publisher.cancel();
             }
         });
     }
     
     /** Produce an R result from a T item.
      * @param item The item to process a result from, or null of complete is true
-     * @param complete True if this is the last item (or item could be null)
-     * @return the results or null if the item is exhausted
+     * @return the results
      */
-    protected abstract R process(T item,boolean complete);
+    protected abstract R process(T item);
+
+    protected R complete()
+    {
+        return null;
+    }
+    
+    protected boolean isConsumed(T item)
+    {
+        return true;
+    }
 
     private void iterate()
     {
+        boolean consumed=false;
         while(true)
         {
-            // Get the next chunk of work
-            R result = process(next,complete);
-            
-            // Did we get something?
-            boolean demand=false;
+            T item;
             try(SpinLock.Lock l = lock.lock();)
             {
-                if (result==null)
+                iterating = requests>0 && (complete || !queue.isEmpty());
+                if (!iterating)
+                    break;
+                item=queue.peek();
+            }
+            
+            R result;
+            
+            if (item==null)
+            {
+                result=complete();
+                consumed=false;
+            }
+            else
+            {
+                result=process(item);
+                consumed=isConsumed(item);
+            }
+            
+            long demand=0;
+            try(SpinLock.Lock l = lock.lock();)
+            {
+                if (consumed)
+                    queue.pop();
+                
+                if (result!=null)
                 {
-                    next=null;
-                    demand=!complete && requests>0;
-                    iterating=!complete && !demand;
+                    requests--;
+                }
+                else if (queue.isEmpty())
+                {
+                    demand=complete?0:(requests-requested);
+                    requested+=demand;
+                    iterating=!complete && demand<=0;
                 }
                 else
-                    requests--;
+                    demand=-1;
             }
             
             // If we can keep processing call somebody
             if (result!=null)
                 subscriber.onNext(result); // may callback request(n)
-            else if (demand)
-                publisher.request(1); // may callback onNext(item)
-            else
+            else if (demand>0)
+                publisher.request(demand); // may callback onNext(item)
+            else if (demand==0)
             {
                 if (complete)
                     subscriber.onComplete();
                 break;
             }
 
-            // Look to see if we can keep process (may include results from callbacks occured)
-            try(SpinLock.Lock l = lock.lock();)
-            {
-                iterating = requests>0 && (complete || next!=null);
-                if (!iterating)
-                    break;
-            }
         }
     }
     
