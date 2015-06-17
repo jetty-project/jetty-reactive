@@ -3,7 +3,7 @@ package org.eclipse.jetty.reactive;
 import java.util.ArrayDeque;
 import java.util.Deque;
 
-import org.eclipse.jetty.util.thread.SpinLock;
+import org.eclipse.jetty.util.thread.Locker;
 import org.reactivestreams.Processor;
 import org.reactivestreams.Subscriber;
 import org.reactivestreams.Subscription;
@@ -30,7 +30,7 @@ import org.reactivestreams.Subscription;
  */
 public abstract class IteratingProcessor<T,R> implements Processor<T,R>
 {
-    private final SpinLock lock = new SpinLock();
+    private final Locker lock = new Locker();
     private final Deque<T> queue = new ArrayDeque<>();
     private Subscription publisher;
     private Subscriber<? super R> subscriber;
@@ -45,7 +45,7 @@ public abstract class IteratingProcessor<T,R> implements Processor<T,R>
         if (s==null)
             throw new NullPointerException();
         boolean connect=false;
-        try(SpinLock.Lock l = lock.lock();)
+        try(Locker.Lock l = lock.lock();)
         {
             publisher=s;
             connect=subscriber!=null;
@@ -60,7 +60,7 @@ public abstract class IteratingProcessor<T,R> implements Processor<T,R>
         if (item==null)
             throw new NullPointerException();
         boolean iterate;
-        try(SpinLock.Lock l = lock.lock();)
+        try(Locker.Lock l = lock.lock();)
         {
             // Sanity checks
             if (complete)
@@ -88,7 +88,7 @@ public abstract class IteratingProcessor<T,R> implements Processor<T,R>
     @Override
     public void onError(Throwable t)
     {
-        try(SpinLock.Lock l = lock.lock();)
+        try(Locker.Lock l = lock.lock();)
         {
             complete=true;
             requests=0;
@@ -102,7 +102,7 @@ public abstract class IteratingProcessor<T,R> implements Processor<T,R>
     public void onComplete()
     {
         boolean iterate;
-        try(SpinLock.Lock l = lock.lock();)
+        try(Locker.Lock l = lock.lock();)
         {
             if (complete)
                 return;
@@ -121,7 +121,7 @@ public abstract class IteratingProcessor<T,R> implements Processor<T,R>
         if (s==null)
             throw new NullPointerException();
         boolean connect=false;
-        try(SpinLock.Lock l = lock.lock();)
+        try(Locker.Lock l = lock.lock();)
         {
             if (subscriber!=null)
                 throw new IllegalStateException("already subscribed");
@@ -142,7 +142,7 @@ public abstract class IteratingProcessor<T,R> implements Processor<T,R>
             {
                 boolean iterate;
                 long demand;
-                try(SpinLock.Lock l = lock.lock();)
+                try(Locker.Lock l = lock.lock();)
                 {
                     requests+=n;
                     iterate = !iterating && requests>0 && (complete || !queue.isEmpty());
@@ -160,7 +160,7 @@ public abstract class IteratingProcessor<T,R> implements Processor<T,R>
             @Override
             public void cancel()
             {
-                try(SpinLock.Lock l = lock.lock();) 
+                try(Locker.Lock l = lock.lock();) 
                 {
                     complete=true;
                     requests=0;
@@ -194,7 +194,7 @@ public abstract class IteratingProcessor<T,R> implements Processor<T,R>
         while(true)
         {
             T item;
-            try(SpinLock.Lock l = lock.lock();)
+            try(Locker.Lock l = lock.lock();)
             {
                 iterating = requests>0 && (complete || !queue.isEmpty());
                 if (!iterating)
@@ -216,7 +216,7 @@ public abstract class IteratingProcessor<T,R> implements Processor<T,R>
             }
             
             long demand=0;
-            try(SpinLock.Lock l = lock.lock();)
+            try(Locker.Lock l = lock.lock();)
             {
                 if (consumed)
                     queue.pop();
