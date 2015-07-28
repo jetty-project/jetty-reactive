@@ -143,6 +143,14 @@ public class RequestPublisher implements Publisher<ByteBuffer>, Subscription, Re
     @Override
     public void cancel()
     {
-        // TODO
+        // TODO more than this
+        try
+        {
+            context.getRequest().getInputStream().close();
+        }
+        catch (IOException e)
+        {
+            LOG.warn("Cancel could not close",e);
+        }   
     }
 }

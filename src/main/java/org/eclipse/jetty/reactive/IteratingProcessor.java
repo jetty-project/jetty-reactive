@@ -88,14 +88,17 @@ public abstract class IteratingProcessor<T,R> implements Processor<T,R>
     @Override
     public void onError(Throwable t)
     {
+        boolean onError=false;
         try(Locker.Lock l = lock.lock();)
         {
+            onError=!complete;
             complete=true;
             requests=0;
             requested=0;
             queue.clear();
         }
-        subscriber.onError(t);
+        if (onError)
+            subscriber.onError(t);
     }
 
     @Override
@@ -160,14 +163,17 @@ public abstract class IteratingProcessor<T,R> implements Processor<T,R>
             @Override
             public void cancel()
             {
+                boolean cancel=false;
                 try(Locker.Lock l = lock.lock();) 
                 {
+                    cancel=!complete;
                     complete=true;
                     requests=0;
                     requested=0;
                     queue.clear();
                 }
-                publisher.cancel();
+                if (cancel)
+                    publisher.cancel();
             }
         });
     }
